@@ -22,8 +22,8 @@ var __inflight = {};
 var __lastCleanup = 0;
 
 function nowSecs() {
-    try { return Math.floor(Date.now() / 1000); } catch (e) {}
-    try { return Math.floor(tickCount() / 1000); } catch (e) {}
+    try { return Math.floor(Date.now() / 1000); } catch (e) { }
+    try { return Math.floor(tickCount() / 1000); } catch (e) { }
     return 0;
 }
 
@@ -35,13 +35,13 @@ function today() {
 }
 
 function vlog(msg) {
-    try { log("[vpncheck] " + msg); } catch (e) {}
+    try { log("[vpncheck] " + msg); } catch (e) { }
 }
 
 function sendTo(name, text) {
     if (!name) return;
     var u = user("" + name);
-    if (u != null) { try { u.sendPM("" + text); } catch (e) {} }
+    if (u != null) { try { u.sendPM("" + text); } catch (e) { } }
 }
 
 function getUser(n) {
@@ -119,7 +119,7 @@ function onLoad() {
     try {
         loadConfig();
         if (!ensureDb()) return;
-        try { Help_addLine("proxy", "/proxy-help - comandos del filtro VPN/proxy (proxycheck.io)"); } catch (e) {}
+        try { Help_addLine("proxy", "/proxy-help - comandos del filtro VPN/proxy (proxycheck.io)"); } catch (e) { }
     } catch (e) {
         log("[vpncheck] error al iniciar: " + e);
         return;
@@ -132,7 +132,7 @@ function onHelp(user) {
         if (user == null) return;
         if (user.level < 2) return;
         user.sendPM("/proxy-help - ver los comandos del filtro VPN/proxy");
-    } catch (e) {}
+    } catch (e) { }
 }
 
 function isIp(s) {
@@ -227,15 +227,15 @@ function applyAction(user) {
     var act = CFG.action;
     if (act === "report") return;
     if (act === "warn") {
-        try { user.sendPM(CFG.notifyMessage); } catch (e) {}
+        try { user.sendPM(CFG.notifyMessage); } catch (e) { }
         return;
     }
     if (CFG.notifyMessage) {
-        try { user.sendPM(CFG.notifyMessage); } catch (e) {}
+        try { user.sendPM(CFG.notifyMessage); } catch (e) { }
     }
-    if (act === "muzzle") { try { user.muzzled = true; } catch (e) {} return; }
-    if (act === "kick") { try { user.kick(); } catch (e) {} return; }
-    if (act === "ban") { try { user.ban(); } catch (e) {} return; }
+    if (act === "muzzle") { try { user.muzzled = true; } catch (e) { } return; }
+    if (act === "kick") { try { user.kick(); } catch (e) { } return; }
+    if (act === "ban") { try { user.ban(); } catch (e) { } return; }
 }
 
 function enforce(user, ip, guid, kind, provider, source) {
@@ -246,6 +246,41 @@ function enforce(user, ip, guid, kind, provider, source) {
     applyAction(user);
 }
 
+function hasActiveDetection(ip, guid) {
+    var db = openDb();
+    if (db == null) return false;
+    db.query(new Query("SELECT id FROM detections WHERE status='active' AND ip=? AND guid=? LIMIT 1", ip, guid));
+    var hit = db.canRead;
+    db.close();
+    return hit;
+}
+
+function detectedInfo(ip, guid) {
+    var c = getCache(ip, guid);
+    if (c != null && c.is_vpn) return { kind: c.kind, provider: c.provider };
+    if (hasActiveDetection(ip, guid)) return { kind: "", provider: "" };
+    return null;
+}
+
+function reapplyToOnline() {
+    if (!CFG.enabled) return 0;
+    var names = Users.names();
+    var applied = 0;
+    for (var i = 0; i < names.length; i++) {
+        var u = getUser(names[i]);
+        if (u == null) continue;
+        var ip = "" + u.externalIp;
+        if (!ip) continue;
+        var guid = "" + u.guid;
+        if (isWhitelisted(ip, guid)) continue;
+        var info = detectedInfo(ip, guid);
+        if (info == null) continue;
+        enforce(u, ip, guid, info.kind, info.provider, "reapply");
+        applied++;
+    }
+    return applied;
+}
+
 function queryProxycheck(user, ip, guid) {
     var key = ip + "|" + guid;
     var r = new HttpRequest();
@@ -253,7 +288,7 @@ function queryProxycheck(user, ip, guid) {
     r.src = API_BASE + ip + "?key=" + encodeURIComponent(CFG.apiKey) + "&tag=astra&p=0";
     r.utf = true;
     r.userAgent = "Astra-vpncheck";
-    r.oncomplete = function(body, status, error) {
+    r.oncomplete = function (body, status, error) {
         delete __inflight[key];
         bumpUsage();
         if (status !== 200 || !body) {
@@ -324,7 +359,7 @@ function onTimer() {
                 db.close();
             }
         }
-    } catch (e) {}
+    } catch (e) { }
 }
 
 function findDetectionByIp(ip) {
@@ -348,7 +383,7 @@ function findDetectionByName(name) {
 }
 
 function findOnlineByIp(ip) {
-    var list = Users.userNames();
+    var list = Users.names();
     for (var i = 0; i < list.length; i++) {
         var u = getUser(list[i]);
         if (u != null && ("" + u.externalIp) === ip) return u;
@@ -397,9 +432,10 @@ function showHelp(user) {
     sendTo(n, "");
     sendTo(n, "DETECCION Y RESPUESTA");
     sendTo(n, "/proxy accion <modo> ........ Qué hacer al detectar:");
-    sendTo(n, "   report|warn|kick|ban|muzzle");
-    sendTo(n, "/proxy flags <tipo> <on|off>  Qué detectar:");
-    sendTo(n, "   " + FLAGS.join(" | "));
+    sendTo(n, "   <report><warn><kick><ban><muzzle>");
+    sendTo(n, "   (se re-aplica al instante a los detectados online)");
+    sendTo(n, "/proxy flags <tipo> <on><off>  Qué detectar:");
+    sendTo(n, "   " + FLAGS.join(" - "));
     sendTo(n, "/proxy mensaje <texto> ...... Aviso que recibe el usuario");
     sendTo(n, "");
     sendTo(n, "API Y LIMITES");
@@ -409,14 +445,14 @@ function showHelp(user) {
     sendTo(n, "");
     sendTo(n, "USUARIOS DETECTADOS");
     sendTo(n, "/proxy lista [all] .......... Ver detectados (all = historial)");
-    sendTo(n, "/proxy info <nick|ip> ....... Detalle de una detección");
-    sendTo(n, "/proxy liberar <nick|ip> .... Quitar bloqueo/mute");
-    sendTo(n, "/proxy permitir <nick|ip> ... Liberar y agregar a lista blanca");
-    sendTo(n, "/proxy blanca add|del|list .. Gestionar lista blanca");
+    sendTo(n, "/proxy info <nick><ip> ....... Detalle de una detección");
+    sendTo(n, "/proxy liberar <nick><ip> .... Quitar bloqueo/mute");
+    sendTo(n, "/proxy permitir <nick><ip> ... Liberar y agregar a lista blanca");
+    sendTo(n, "/proxy blanca <add><del><list> .. Gestionar lista blanca");
     sendTo(n, "");
     sendTo(n, "DIAGNOSTICO");
     sendTo(n, "/proxy probar <ip> .......... Consultar una IP ahora (gasta 1)");
-    sendTo(n, "/proxy cache stats|clear .... Ver o vaciar el cache");
+    sendTo(n, "/proxy cache <stats><clear> .... Ver o vaciar el cache");
     sendTo(n, "(También acepta los nombres en inglés: status, action, key, list, allow, whitelist, check, release, ttl, limit, msg, flag, cache)");
 }
 
@@ -448,7 +484,7 @@ function listDetections(user, rest) {
 
 function infoDetection(user, rest) {
     var q = ("" + rest).replace(/^\s+|\s+$/g, "");
-    if (!q) { sendTo("" + user.name, "Uso: /proxy info <nick|ip>"); return; }
+    if (!q) { sendTo("" + user.name, "Uso: /proxy info <nick><ip>"); return; }
     var db = openDb();
     if (db == null) return;
     db.query(new Query("SELECT name, guid, ip, action, kind, provider, detected_at, status FROM detections WHERE lower(name)=lower(?) OR ip=? ORDER BY detected_at DESC LIMIT 1", q, q));
@@ -476,7 +512,7 @@ function releaseOne(user, rest, alsoWhitelist) {
     if (t.name) {
         var online = getUser(t.name);
         if (online != null) {
-            try { online.muzzled = false; unmuzzled = true; } catch (e) {}
+            try { online.muzzled = false; unmuzzled = true; } catch (e) { }
         }
     }
     var db = openDb();
@@ -555,7 +591,7 @@ function manualCheck(adminName, ip) {
     r.src = API_BASE + ip + "?key=" + encodeURIComponent(CFG.apiKey) + "&tag=astra-manual&p=0";
     r.utf = true;
     r.userAgent = "Astra-vpncheck";
-    r.oncomplete = function(body, status, error) {
+    r.oncomplete = function (body, status, error) {
         bumpUsage();
         if (status !== 200 || !body) { sendTo(adminName, "proxycheck error status=" + status + " error=" + error); return; }
         var j = null;
@@ -635,7 +671,10 @@ function handleSub(user, sub0, rest) {
     if (sub === "action") {
         var a = normalizeAction(("" + rest).toLowerCase());
         if (ACTIONS.indexOf(a) < 0) { sendTo(n, "Acción inválida. Opciones: " + ACTIONS.join(", ")); return; }
-        CFG.action = a; saveConfig(); sendTo(n, "Acción = " + a); return;
+        CFG.action = a; saveConfig();
+        var applied = reapplyToOnline();
+        sendTo(n, "Acción = " + a + (applied > 0 ? " (re-aplicada a " + applied + " detectado(s) online)" : ""));
+        return;
     }
     if (sub === "ttl") {
         var t = parseInt(rest, 10);
