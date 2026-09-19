@@ -119,12 +119,20 @@ function onLoad() {
     try {
         loadConfig();
         if (!ensureDb()) return;
-        try { Help_addLine("proxy", "/proxy - filtro VPN/proxy (proxycheck.io)"); } catch (e) {}
+        try { Help_addLine("proxy", "/proxy-help - comandos del filtro VPN/proxy (proxycheck.io)"); } catch (e) {}
     } catch (e) {
         log("[vpncheck] error al iniciar: " + e);
         return;
     }
     vlog("cargado (enabled=" + CFG.enabled + ", action=" + CFG.action + ", apiKey=" + (CFG.apiKey ? "sí" : "NO") + ")");
+}
+
+function onHelp(user) {
+    try {
+        if (user == null) return;
+        if (user.level < 2) return;
+        user.sendPM("/proxy-help - ver los comandos del filtro VPN/proxy");
+    } catch (e) {}
 }
 
 function isIp(s) {
@@ -379,16 +387,37 @@ function unbanMatches(name, ip) {
 
 function showHelp(user) {
     var n = "" + user.name;
-    sendTo(n, "=== vpncheck: /proxy ===");
-    sendTo(n, "/proxy status | on | off");
-    sendTo(n, "/proxy action " + ACTIONS.join("|"));
-    sendTo(n, "/proxy ttl <días> | limit <n> | key <apiKey>");
-    sendTo(n, "/proxy flag <" + FLAGS.join("|") + "> <on|off>");
-    sendTo(n, "/proxy msg <texto>");
-    sendTo(n, "/proxy list [active|all] | info <nick|ip>");
-    sendTo(n, "/proxy release <nick|ip> | allow <nick|ip>");
-    sendTo(n, "/proxy whitelist add|del|list [ip]");
-    sendTo(n, "/proxy check <ip> | cache stats|clear [ip|all]");
+    sendTo(n, "=== Filtro VPN/Proxy (vpncheck) ===");
+    sendTo(n, "Usá /proxy <comando>. Ayuda completa: /proxy-help");
+    sendTo(n, "");
+    sendTo(n, "ESTADO Y ENCENDIDO");
+    sendTo(n, "/proxy estado ............... Ver config actual y consultas de hoy");
+    sendTo(n, "/proxy activar .............. Encender el filtro");
+    sendTo(n, "/proxy desactivar ........... Apagar el filtro");
+    sendTo(n, "");
+    sendTo(n, "DETECCION Y RESPUESTA");
+    sendTo(n, "/proxy accion <modo> ........ Qué hacer al detectar:");
+    sendTo(n, "   report|warn|kick|ban|muzzle");
+    sendTo(n, "/proxy flags <tipo> <on|off>  Qué detectar:");
+    sendTo(n, "   " + FLAGS.join(" | "));
+    sendTo(n, "/proxy mensaje <texto> ...... Aviso que recibe el usuario");
+    sendTo(n, "");
+    sendTo(n, "API Y LIMITES");
+    sendTo(n, "/proxy clave <apiKey> ....... API key de proxycheck.io");
+    sendTo(n, "/proxy dias <n> ............. Días de cache (0 = permanente)");
+    sendTo(n, "/proxy limite <n> ........... Máximo de consultas por día");
+    sendTo(n, "");
+    sendTo(n, "USUARIOS DETECTADOS");
+    sendTo(n, "/proxy lista [all] .......... Ver detectados (all = historial)");
+    sendTo(n, "/proxy info <nick|ip> ....... Detalle de una detección");
+    sendTo(n, "/proxy liberar <nick|ip> .... Quitar bloqueo/mute");
+    sendTo(n, "/proxy permitir <nick|ip> ... Liberar y agregar a lista blanca");
+    sendTo(n, "/proxy blanca add|del|list .. Gestionar lista blanca");
+    sendTo(n, "");
+    sendTo(n, "DIAGNOSTICO");
+    sendTo(n, "/proxy probar <ip> .......... Consultar una IP ahora (gasta 1)");
+    sendTo(n, "/proxy cache stats|clear .... Ver o vaciar el cache");
+    sendTo(n, "(También acepta los nombres en inglés: status, action, key, list, allow, whitelist, check, release, ttl, limit, msg, flag, cache)");
 }
 
 function showStatus(user) {
@@ -545,44 +574,96 @@ function manualCheck(adminName, ip) {
     sendTo(adminName, "Consultando " + ip + "...");
 }
 
-function handleSub(user, sub, rest) {
+function normalizeSub(sub) {
+    var m = {
+        "": "status", "estado": "status", "status": "status",
+        "activar": "on", "encender": "on", "on": "on",
+        "desactivar": "off", "apagar": "off", "off": "off",
+        "accion": "action", "acción": "action", "action": "action",
+        "dias": "ttl", "días": "ttl", "ttl": "ttl",
+        "limite": "limit", "límite": "limit", "limit": "limit",
+        "flag": "flag", "flags": "flag", "tipo": "flag", "tipos": "flag",
+        "mensaje": "msg", "msg": "msg", "aviso": "msg",
+        "clave": "key", "apikey": "key", "key": "key",
+        "lista": "list", "detectados": "list", "list": "list",
+        "info": "info",
+        "liberar": "release", "release": "release",
+        "permitir": "allow", "allow": "allow", "blanquear": "allow",
+        "blanca": "whitelist", "whitelist": "whitelist", "lista-blanca": "whitelist",
+        "probar": "check", "check": "check", "consultar": "check",
+        "cache": "cache",
+        "ayuda": "help", "help": "help"
+    };
+    return m[sub] || sub;
+}
+
+function normalizeAction(a) {
+    var m = {
+        "reportar": "report", "report": "report",
+        "avisar": "warn", "warn": "warn",
+        "expulsar": "kick", "kick": "kick", "patada": "kick",
+        "banear": "ban", "ban": "ban",
+        "silenciar": "muzzle", "mute": "muzzle", "muzzle": "muzzle"
+    };
+    return m[a] || a;
+}
+
+function normalizeFlagName(f) {
+    var m = {
+        "proxy": "proxy",
+        "vpn": "vpn",
+        "tor": "tor", "torexit": "tor",
+        "hosting": "hosting", "alojamiento": "hosting", "datacenter": "hosting",
+        "anonymous": "anonymous", "anonimo": "anonymous", "anónimo": "anonymous"
+    };
+    return m[f] || f;
+}
+
+function normalizeOnOff(v) {
+    if (v === "on" || v === "activar" || v === "encender" || v === "si" || v === "sí" || v === "true" || v === "1") return true;
+    if (v === "off" || v === "desactivar" || v === "apagar" || v === "no" || v === "false" || v === "0") return false;
+    return null;
+}
+
+function handleSub(user, sub0, rest) {
     var n = "" + user.name;
-    if (sub === "status" || sub === "") { showStatus(user); return; }
+    var sub = normalizeSub(sub0);
+    if (sub === "status") { showStatus(user); return; }
     if (sub === "help") { showHelp(user); return; }
-    if (sub === "on") { CFG.enabled = true; saveConfig(); sendTo(n, "vpncheck activado."); return; }
-    if (sub === "off") { CFG.enabled = false; saveConfig(); sendTo(n, "vpncheck desactivado."); return; }
+    if (sub === "on") { CFG.enabled = true; saveConfig(); sendTo(n, "Filtro VPN/proxy ACTIVADO."); return; }
+    if (sub === "off") { CFG.enabled = false; saveConfig(); sendTo(n, "Filtro VPN/proxy DESACTIVADO."); return; }
     if (sub === "action") {
-        var a = ("" + rest).toLowerCase();
+        var a = normalizeAction(("" + rest).toLowerCase());
         if (ACTIONS.indexOf(a) < 0) { sendTo(n, "Acción inválida. Opciones: " + ACTIONS.join(", ")); return; }
         CFG.action = a; saveConfig(); sendTo(n, "Acción = " + a); return;
     }
     if (sub === "ttl") {
         var t = parseInt(rest, 10);
-        if (isNaN(t) || t < 0) { sendTo(n, "TTL inválido (días, 0 = permanente)."); return; }
-        CFG.ttlDays = t; saveConfig(); sendTo(n, "TTL = " + (t === 0 ? "permanente" : t + " días") + "."); return;
+        if (isNaN(t) || t < 0) { sendTo(n, "Días inválidos (0 = permanente). Uso: /proxy dias <n>"); return; }
+        CFG.ttlDays = t; saveConfig(); sendTo(n, "Cache = " + (t === 0 ? "permanente" : t + " días") + "."); return;
     }
     if (sub === "limit") {
         var lim = parseInt(rest, 10);
-        if (isNaN(lim) || lim <= 0) { sendTo(n, "Límite inválido."); return; }
-        CFG.dailyLimit = lim; saveConfig(); sendTo(n, "Límite diario = " + lim); return;
+        if (isNaN(lim) || lim <= 0) { sendTo(n, "Límite inválido. Uso: /proxy limite <n>"); return; }
+        CFG.dailyLimit = lim; saveConfig(); sendTo(n, "Límite diario = " + lim + " consultas."); return;
     }
     if (sub === "flag") {
         var fp = ("" + rest).split(/\s+/);
-        if (fp.length < 2) { sendTo(n, "Uso: /proxy flag <" + FLAGS.join("|") + "> <on|off>"); return; }
-        var fname = fp[0].toLowerCase();
-        var fon = fp[1].toLowerCase();
-        if (FLAGS.indexOf(fname) < 0) { sendTo(n, "Flag inválida: " + fname); return; }
-        if (fon !== "on" && fon !== "off") { sendTo(n, "Usá on u off."); return; }
+        if (fp.length < 2) { sendTo(n, "Uso: /proxy flags <" + FLAGS.join("|") + "> <on|off>"); return; }
+        var fname = normalizeFlagName(fp[0].toLowerCase());
+        var fon = normalizeOnOff(fp[1].toLowerCase());
+        if (FLAGS.indexOf(fname) < 0) { sendTo(n, "Tipo inválido: " + fp[0] + ". Opciones: " + FLAGS.join(", ")); return; }
+        if (fon === null) { sendTo(n, "Usá on/off (o activar/desactivar)."); return; }
         var field = "flag" + fname.charAt(0).toUpperCase() + fname.slice(1);
-        CFG[field] = (fon === "on");
-        saveConfig(); sendTo(n, fname + " = " + fon); return;
+        CFG[field] = fon;
+        saveConfig(); sendTo(n, "Detectar " + fname + " = " + (fon ? "on" : "off")); return;
     }
     if (sub === "msg") {
-        if (!rest) { sendTo(n, "Uso: /proxy msg <texto>"); return; }
+        if (!rest) { sendTo(n, "Uso: /proxy mensaje <texto>"); return; }
         CFG.notifyMessage = "" + rest; saveConfig(); sendTo(n, "Mensaje actualizado."); return;
     }
     if (sub === "key") {
-        if (!rest) { sendTo(n, "Uso: /proxy key <apiKey>"); return; }
+        if (!rest) { sendTo(n, "Uso: /proxy clave <apiKey>"); return; }
         CFG.apiKey = ("" + rest).replace(/^\s+|\s+$/g, ""); saveConfig(); sendTo(n, "API key guardada."); return;
     }
     if (sub === "list") { listDetections(user, rest); return; }
@@ -592,11 +673,15 @@ function handleSub(user, sub, rest) {
     if (sub === "whitelist") { handleWhitelist(user, rest); return; }
     if (sub === "check") {
         var ip = ("" + rest).replace(/^\s+|\s+$/g, "");
-        if (!isIp(ip)) { sendTo(n, "Uso: /proxy check <ip>"); return; }
+        if (!isIp(ip)) { sendTo(n, "Uso: /proxy probar <ip>"); return; }
         manualCheck(n, ip); return;
     }
     if (sub === "cache") { handleCache(user, rest); return; }
-    sendTo(n, "Subcomando desconocido: " + sub + ". Probá /proxy help");
+    sendTo(n, "Comando desconocido: " + sub0 + ". Mirá /proxy-help");
+}
+
+function isHelpCommand(name) {
+    return name === "proxy-help" || name === "proxyhelp" || name === "proxy_help" || name === "ayuda-proxy";
 }
 
 function onCommand(user, command, target, args) {
@@ -604,6 +689,11 @@ function onCommand(user, command, target, args) {
         if (user == null) return;
         var full = "" + command;
         var cmdName = full.split(/\s+/)[0].toLowerCase();
+        if (isHelpCommand(cmdName)) {
+            if (user.level < 2) { sendTo("" + user.name, "Access denied."); return; }
+            showHelp(user);
+            return;
+        }
         if (cmdName !== "proxy") return;
         if (user.level < 2) { sendTo("" + user.name, "Access denied."); return; }
         var raw = ("" + args).replace(/^\s+|\s+$/g, "");
